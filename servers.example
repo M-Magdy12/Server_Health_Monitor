@@ -1,0 +1,4 @@
+ubuntu,3.88.71.71,/Desktop/ubuntuKey.pem
+databae,14.18.3.11,/Desktop/databaseKey.pem
+test,3.12.6.12,/Desktop/testKey.pem
+dev,3.88.71.71,/Desktop/devKey.pem
