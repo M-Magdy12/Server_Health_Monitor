@@ -21,6 +21,7 @@ d=$(date +'%y-%m-%d__%H-%M')
 LOG_DIR="$(pwd)"
 MAIN_LOG="${LOG_DIR}/${d}_LOGS"
 FAILED_LOG="${LOG_DIR}/${d}_FAILED_LOGS"
+MAX_SERVERS=10
 
 
 get_key() {
@@ -34,7 +35,7 @@ server_check() {
     local target_name="$1"
     local target_key="${servers["$target_name"]}"
 
-    ssh -T -i "$target_key" "$target_name" 'bash -s' << 'EOF'
+    ssh -T -i "$target_key" -o BatchMode=yes -o ConnectTimeout=5 "$target_name" 'bash -s' << 'EOF'
         RAM_WARN=75
         RAM_CRIT=90
         DISK_WARN=80
@@ -79,28 +80,32 @@ report() {
     local report_data="$2"
     
     {
+        flock -x 200 
         echo "==================================================================="
         printf "  SERVER  : %s\n" "$server_target"
         echo "==================================================================="
         echo "$report_data"
         echo -e "\n\n" 
-    } >> "$MAIN_LOG"
+    } 200>> "$MAIN_LOG"
 }
 
 failed_logs() {
-    echo " Connection to $1 failed due to: $2" >> "$FAILED_LOG"
-    echo "==========================================" >> "$FAILED_LOG"
+    {
+        flock -x 201
+        echo " Connection to $1 failed due to: $2" >> "$FAILED_LOG"
+        echo "==========================================" >> "$FAILED_LOG"
+    } 201>> "$FAILED_LOG"
 }
 
+run_check() {
+    local i="$1"
 
-for i in "${!servers[@]}"; do 
     echo "Trying to connect to $i..."
    
-    check=$(ssh -i "${servers["$i"]}" -o BatchMode=yes -o ConnectTimeout=5 "$i" exit 2>&1)
-    
+    r=$(server_check "$i" 2>&1)
     if [[ $? -eq 0 ]]; then  
         echo "Connected successfully to $i"
-        r=$(server_check "$i")
+        
         report "$i" "$r" 
         echo "Data retrieved successfully at $MAIN_LOG"
         echo "EXITING $i..."
@@ -109,14 +114,24 @@ for i in "${!servers[@]}"; do
        # echo "${servers["$i"]}"
         echo "Could not connect to $i"
         echo "$check"
-        failed_logs "$i" "$check"
+        failed_logs "$i" "$r"
         echo "Check $FAILED_LOG for details."
     fi
     echo "======================================================="
+
+
+}
+for i in "${!servers[@]}"; do 
+    run_check "$i" &
+  
+    while (( $(jobs -rp | wc -l) >= "$MAX_SERVERS")); do
+        wait -n
+    done
+
 done
 
 
-
+wait
 
 if [[ -f "$MAIN_LOG" ]]; then
     warning_cnt=$(grep -F -c '[WARNING]' "$MAIN_LOG" || true)
